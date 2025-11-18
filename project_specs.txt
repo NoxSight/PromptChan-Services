@@ -1,0 +1,178 @@
+**Role:** You are an expert Python backend developer specializing in building APIs with FastAPI, PostgreSQL, and JWT authentication. You are known for writing clean, maintainable, and production-ready code, following best practices for project structure, security, and data validation.
+
+**Task:** Your task is to architect and generate a complete backend for a "Prompt Catalog" application. This backend will provide a RESTful API for storing, managing, searching, and retrieving prompt templates. The implementation must adhere to the detailed specifications below, which include user authentication, full-text search, favorites system, and prompt visibility control (public/private).
+
+---
+### **1. Technology Stack**
+
+*   **Framework:** FastAPI
+*   **Database:** PostgreSQL
+*   **ORM:** SQLAlchemy (version 2.0+) with the async driver (`asyncpg`).
+*   **Database Migrations:** Alembic
+*   **Authentication:** PyJWT for access tokens.
+*   **Password Hashing:** Passlib with `bcrypt`.
+*   **Configuration:** Pydantic's `BaseSettings` for managing environment variables.
+*   **Data Validation:** Pydantic (version 2+) for request/response models.
+
+---
+### **2. Project Structure**
+
+Generate the project under `backend/` folder with the following structure:
+
+```
+backend/
+├── .env.example
+├── .gitignore
+├── alembic.ini
+├── requirements.txt
+├── app/
+│   ├── __init__.py
+│   ├── main.py             # FastAPI app instance, router includes
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── config.py       # Pydantic settings for .env variables
+│   │   └── security.py     # JWT handling, password hashing utilities
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── deps.py         # Dependency for getting current user from token
+│   │   ├── api.py          # Main APIRouter (no v1 versioning)
+│   │   ├── auth.py         # Endpoints for /auth/login, /auth/register
+│   │   ├── prompts.py      # CRUD endpoints for /prompts
+│   │   └── users.py        # Endpoints for /users/me/favorites
+│   ├── db/
+│   │   ├── __init__.py
+│   │   ├── base.py         # SQLAlchemy declarative base
+│   │   └── session.py      # Async session factory
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── user.py         # SQLAlchemy User model
+│   │   ├── prompt.py       # SQLAlchemy PromptTemplate model (with visibility)
+│   │   └── favorite.py     # SQLAlchemy association table for favorites
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   ├── user.py         # Pydantic schemas for User
+│   │   ├── prompt.py       # Pydantic schemas for PromptTemplate (with visibility)
+│   │   └── favorite.py     # Pydantic schemas for Favorite operations
+│   └── crud/
+│       ├── __init__.py
+│       ├── base.py         # Generic CRUD functions
+│       ├── user.py         # CRUD operations for User
+│       ├── prompt.py       # CRUD operations for PromptTemplate
+│       └── favorite.py     # CRUD operations for Favorites
+```
+
+---
+### **3. Core Concepts & Data Models**
+
+#### **User Model (`app/models/user.py`)**
+*   `id`: Integer, Primary Key
+*   `email`: String, unique, indexed
+*   `username`: String, unique, indexed
+*   `hashed_password`: String
+*   **Relationships:**
+    *   `created_prompts`: One-to-many relationship to `PromptTemplate`.
+    *   `favorites`: Many-to-many relationship to `PromptTemplate`, using the `user_prompt_favorites` association table.
+
+#### **PromptTemplate Model (`app/models/prompt.py`)**
+*   `id`: Integer, Primary Key
+*   `title`: String, indexed
+*   `short_description`: String, indexed
+*   `long_description`: Text
+*   `template`: Text (stores the raw prompt with `{{placeholders}}`).
+*   `inputs`: Text (stores a YAML string defining the inputs).
+*   `tags`: Text (comma-separated string of tags, e.g., "marketing,creative").
+*   `visibility`: Enum("public", "private") - **Private prompts visible only to creator, public visible to all**
+*   `search_vector`: `TSVector` (for full-text search).
+*   `creator_id`: Integer, Foreign Key referencing `user.id`.
+*   `creator`: Many-to-one relationship to the `User` model.
+*   `favorited_by`: Many-to-many relationship to the `User` model.
+*   `created_at`: DateTime, default `utcnow`.
+*   `updated_at`: DateTime, default `utcnow`, `onupdate`.
+
+#### **The `inputs` YAML Structure**
+The `inputs` field stores a YAML string representing a list of input objects.
+
+**Example YAML:**
+```yaml
+- name: product_name
+  type: text
+  label: Product Name
+  description: The name of the product.
+  placeholder: e.g., "Quantum Keyboard"
+  required: true
+  validation:
+    min_length: 5
+    max_length: 50
+- name: target_audience
+  type: select
+  label: Target Audience
+  required: true
+  options:
+    - label: "Gamers"
+      value: "gamers"
+    - label: "Developers"
+      value: "developers"
+```
+
+#### **Favorites Feature: Many-to-Many Association Table (`app/models/favorite.py`)**
+Create a table named `user_prompt_favorites` to link users and prompts.
+*   `user_id`: Integer, ForeignKey to `user.id`, part of the composite primary key.
+*   `prompt_id`: Integer, ForeignKey to `prompt_template.id`, part of the composite primary key.
+
+---
+### **4. Feature Requirements & Implementation Details**
+
+1.  **Configuration & Database Setup:**
+    *   Use Pydantic `BaseSettings` in `app/core/config.py` to load from `.env`.
+    *   Include `DATABASE_URL`, `SECRET_KEY`, `ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES`.
+    *   Set up an async SQLAlchemy session with `asyncpg`.
+    *   **Alembic:** Initial migration must create all tables including `user_prompt_favorites`, `visibility` enum, `search_vector` column, and **GIN index** on `search_vector`.
+
+2.  **Authentication & Authorization (`app/core/security.py`, `app/api/auth.py`):**
+    *   **Registration (`POST /api/auth/register`):** Create user with hashed password.
+    *   **Login (`POST /api/auth/login`):** Validate credentials and return JWT access token.
+    *   **Protected Dependency (`app/api/deps.py`):** Extract JWT from `Authorization: Bearer <token>` header.
+
+3.  **Full-Text Search Feature (with visibility filtering):**
+    *   `search_vector` automatically populated from `title`, `short_description`, `long_description`, `tags`.
+    *   **Private prompts only visible to creator, public prompts visible to all users.**
+    *   `GET /api/prompts` accepts `q` query parameter using `to_tsquery` against `search_vector`.
+    *   Implement visibility filtering in `crud/prompt.py`.
+
+4.  **Favorites Feature:**
+    *   CRUD functions in `crud/favorite.py`: `add_favorite`, `remove_favorite`, `get_favorites_for_user`.
+    *   `add_favorite` handles duplicates gracefully.
+
+5.  **API Endpoints (All prompt/user endpoints protected):**
+    *   **Auth (`app/api/auth.py`):**
+        *   `POST /api/auth/register`
+        *   `POST /api/auth/login`
+    *   **Prompts (`app/api/prompts.py`):**
+        *   `POST /api/prompts`: Create prompt (`creator_id` from current user).
+        *   `GET /api/prompts`: List prompts with pagination (`skip`, `limit`), **respects visibility**. Query params: `q`, `creator_id`, `tags`.
+        *   `GET /api/prompts/{id}`: Get single prompt, **respects visibility**.
+        *   `PUT /api/prompts/{id}`: Update (only creator).
+        *   `DELETE /api/prompts/{id}`: Delete (only creator).
+        *   `POST /api/prompts/{id}/favorite`: Add to favorites.
+        *   `DELETE /api/prompts/{id}/favorite`: Remove from favorites.
+    *   **Users (`app/api/users.py`):**
+        *   `GET /api/users/me/favorites`: Paginated favorited prompts.
+
+6.  **Pydantic Schemas (`app/schemas/`):**
+    *   Use `model_config = {"from_attributes": True}` for response schemas.
+    *   **Prompt Schemas:**
+        *   `PromptCreate`: Includes `title`, `visibility` (default: public). `inputs`: `List[Dict[str, Any]]` → YAML string.
+        *   `PromptUpdate`: All fields optional including `visibility`.
+        *   `Prompt`: Includes `creator.username`, `visibility`.
+    *   **User Schemas:**
+        *   `User`: Response (id, username).
+        *   `UserCreate`: Registration request.
+
+---
+### **Final Deliverables**
+
+Complete codebase matching the updated structure and requirements:
+*   All Python files as per structure above.
+*   `requirements.txt`, `.env.example`.
+*   Alembic configuration and initial migration (with GIN index on `search_vector`).
+*   Clear comments/docstrings for security, search, visibility logic.
