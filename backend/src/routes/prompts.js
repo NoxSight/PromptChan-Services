@@ -19,7 +19,8 @@ const promptCreateSchema = Joi.object({
     description: Joi.string().optional(),
     placeholder: Joi.string().optional(),
     required: Joi.boolean().default(true),
-    validation: Joi.object().optional()
+    validation: Joi.object().optional(),
+    options: Joi.array().optional()
   })).optional(),
   tags: Joi.string().optional(),
   visibility: Joi.string().valid('public', 'private').default('public'),
