@@ -1,1 +1,0 @@
-"""CRUD operations for the Prompt Catalog application"""
