@@ -65,6 +65,10 @@ input:focus, textarea:focus, select:focus {
 }
 
 .icon-heart::before {
+  content: '🖤';
+}
+
+.icon-heart.favorited::before {
   content: '❤️';
 }
 

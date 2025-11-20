@@ -1,7 +1,7 @@
 const express = require('express');
 const Joi = require('joi');
-const { Op, where, literal } = require('sequelize');
-const { PromptTemplate, User } = require('../models/index.js');
+const { Op, where, literal, fn, col } = require('sequelize');
+const { PromptTemplate, User, UserPromptFavorites } = require('../models/index.js');
 const { authenticateToken } = require('../utils/auth.js');
 
 const router = express.Router();
@@ -93,13 +93,74 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
+// GET /api/prompts/favorites - Get user's favorited prompts
+router.get('/favorites', authenticateToken, async (req, res) => {
+  try {
+    const { skip = 0, limit = 20 } = req.query;
+    const userId = req.user.id;
+
+    // Get all favorite prompt IDs for the user
+    const favorites = await UserPromptFavorites.findAll({
+      where: { user_id: userId },
+      attributes: ['prompt_id'],
+      order: [['prompt_id', 'DESC']],
+    });
+
+    const promptIds = favorites.map(fav => fav.prompt_id);
+    
+    if (promptIds.length === 0) {
+      return res.json({
+        prompts: [],
+        total: 0,
+        skip: parseInt(skip),
+        limit: parseInt(limit),
+      });
+    }
+
+    // Get the actual prompts with pagination
+    const { count, rows } = await PromptTemplate.findAndCountAll({
+      where: {
+        id: {
+          [Op.in]: promptIds
+        }
+      },
+      include: [
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['id', 'username'],
+        },
+      ],
+      order: [['created_at', 'DESC']],
+      limit: Math.min(parseInt(limit), 100),
+      offset: parseInt(skip),
+    });
+
+    res.json({
+      prompts: rows,
+      total: count,
+      skip: parseInt(skip),
+      limit: parseInt(limit),
+    });
+  } catch (error) {
+    console.error('Get favorites error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /api/prompts - List prompts with search and filters
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const { skip = 0, limit = 20, q, creator_id, tags } = req.query;
+    const { skip = 0, limit = 20, q, creator_id, tags, favorites_only } = req.query;
     const userId = req.user.id;
 
     const whereClause = {};
+    let joinFavorites = false;
+
+    // If favorites_only filter is requested
+    if (favorites_only === 'true') {
+      joinFavorites = true;
+    }
 
     // Full-text search across title, short_description, and tags
     if (q) {
@@ -110,9 +171,9 @@ router.get('/', authenticateToken, async (req, res) => {
       console.log('Op.iLike value:', Op.iLike);
       
       whereClause[Op.or] = [
-        { title: { [Op.iLike]: `%${searchTerm}%` } },
-        { short_description: { [Op.iLike]: `%${searchTerm}%` } },
-        { tags: { [Op.iLike]: `%${searchTerm}%` } },
+        where(fn('UPPER', col('title')), Op.like, `%${searchTerm.toUpperCase()}%`),
+        where(fn('UPPER', col('short_description')), Op.like, `%${searchTerm.toUpperCase()}%`),
+        where(fn('UPPER', col('tags')), Op.like, `%${searchTerm.toUpperCase()}%`),
       ];
       
       console.log('whereClause keys:', Object.keys(whereClause));
@@ -135,9 +196,9 @@ router.get('/', authenticateToken, async (req, res) => {
         if (!whereClause[Op.and]) {
           whereClause[Op.and] = [];
         }
-        whereClause[Op.and].push({ tags: { [Op.iLike]: `%${tags}%` } });
+        whereClause[Op.and].push(where(fn('UPPER', col('tags')), Op.like, `%${tags.toUpperCase()}%`));
       } else {
-        whereClause.tags = { [Op.iLike]: `%${tags}%` };
+        whereClause.tags = where(fn('UPPER', col('tags')), Op.like, `%${tags.toUpperCase()}%`);
       }
       console.log('whereClause after tags filter:', JSON.stringify(whereClause, null, 2));
     }
@@ -170,7 +231,7 @@ router.get('/', authenticateToken, async (req, res) => {
     console.log('Final where clause has conditions:', hasConditions);
     console.log('Final where symbols:', Object.getOwnPropertySymbols(finalWhere));
 
-    const { count, rows } = await PromptTemplate.findAndCountAll({
+    let queryOptions = {
       where: finalWhere,
       include: [
         {
@@ -182,10 +243,49 @@ router.get('/', authenticateToken, async (req, res) => {
       order: [['created_at', 'DESC']],
       limit: Math.min(parseInt(limit), 100), // Cap limit at 100
       offset: parseInt(skip),
-    });
+    };
+
+    // If filtering by favorites only, add join with favorites table
+    if (joinFavorites) {
+      queryOptions.include.push({
+        model: User,
+        through: UserPromptFavorites,
+        as: 'favorited_by',
+        where: { id: userId },
+        attributes: [],
+        required: true
+      });
+    }
+
+    const { count, rows } = await PromptTemplate.findAndCountAll(queryOptions);
+
+    let promptsWithFavorites;
+
+    if (joinFavorites) {
+      // All prompts are favorited since we filtered by favorites
+      promptsWithFavorites = rows.map(prompt => {
+        const promptData = prompt.toJSON();
+        promptData.isFavorited = true;
+        return promptData;
+      });
+    } else {
+      // Get user's favorite prompt IDs for status
+      const userFavorites = await UserPromptFavorites.findAll({
+        where: { user_id: userId },
+        attributes: ['prompt_id']
+      });
+      const favoriteIds = userFavorites.map(fav => fav.prompt_id);
+
+      // Add isFavorited status to each prompt
+      promptsWithFavorites = rows.map(prompt => {
+        const promptData = prompt.toJSON();
+        promptData.isFavorited = favoriteIds.includes(prompt.id);
+        return promptData;
+      });
+    }
 
     res.json({
-      prompts: rows,
+      prompts: promptsWithFavorites,
       total: count,
       skip: parseInt(skip),
       limit: parseInt(limit),
@@ -214,7 +314,18 @@ router.get('/:id', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Private prompt - access denied' });
     }
 
-    res.json(prompt);
+    // Check if this prompt is favorited by the current user
+    const isFavorited = await UserPromptFavorites.findOne({
+      where: {
+        user_id: req.user.id,
+        prompt_id: prompt.id
+      }
+    });
+
+    const promptData = prompt.toJSON();
+    promptData.isFavorited = !!isFavorited;
+
+    res.json(promptData);
   } catch (error) {
     console.error('Get prompt error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -314,46 +425,5 @@ router.delete('/:id/favorite', authenticateToken, async (req, res) => {
   }
 });
 
-// GET /api/prompts/favorites - Get user's favorited prompts
-router.get('/favorites', authenticateToken, async (req, res) => {
-  try {
-    const { skip = 0, limit = 20 } = req.query;
-    const userId = req.user.id;
-
-    const favorites = await UserPromptFavorites.findAll({
-      where: { user_id: userId },
-      include: [
-        {
-          model: PromptTemplate,
-          include: [
-            {
-              model: User,
-              as: 'creator',
-              attributes: ['id', 'username'],
-            },
-          ],
-        },
-      ],
-      order: [[PromptTemplate, 'created_at', 'DESC']],
-      limit: Math.min(parseInt(limit), 100), // Cap limit at 100
-      offset: parseInt(skip),
-    });
-
-    const prompts = favorites.map(fav => fav.PromptTemplate);
-    const total = await UserPromptFavorites.count({
-      where: { user_id: userId }
-    });
-
-    res.json({
-      prompts,
-      total,
-      skip: parseInt(skip),
-      limit: parseInt(limit),
-    });
-  } catch (error) {
-    console.error('Get favorites error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 
 module.exports = router;

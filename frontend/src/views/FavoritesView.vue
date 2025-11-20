@@ -30,7 +30,7 @@
               class="favorite-btn favorited"
               title="Remove from favorites"
             >
-              <i class="icon-heart"></i>
+              <i class="icon-heart favorited"></i>
             </button>
           </div>
         </div>

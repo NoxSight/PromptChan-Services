@@ -15,7 +15,7 @@
             :class="['favorite-btn', { favorited: isFavorited }]"
             :title="isFavorited ? 'Remove from favorites' : 'Add to favorites'"
           >
-            <i class="icon-heart"></i>
+            <i :class="['icon-heart', { favorited: isFavorited }]"></i>
           </button>
           <button v-if="isOwner" @click="editPrompt" class="btn btn-secondary">
             Edit
@@ -130,6 +130,7 @@ const loadPrompt = async () => {
     
     prompt.value = data
     isOwner.value = user.value?.id === prompt.value.creator_id
+    isFavorited.value = data.isFavorited || false
   } catch (error) {
     console.error('Failed to load prompt:', error)
   } finally {

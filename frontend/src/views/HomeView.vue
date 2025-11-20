@@ -38,6 +38,11 @@
             <option v-for="tag in availableTags" :key="tag" :value="tag">{{ tag }}</option>
           </select>
           
+          <label class="favorites-filter" v-if="isAuthenticated">
+            <input type="checkbox" v-model="showOnlyFavorites" @change="applyFavoritesFilter">
+            <span class="filter-text">❤️ Show only favorites</span>
+          </label>
+          
           <button @click="clearFilters" class="btn btn-outline">Clear Filters</button>
         </div>
       </div>
@@ -62,11 +67,11 @@
           </div>
           <div class="prompt-footer">
             <button
-              @click.stop="toggleFavorite(prompt.id)"
-              :class="['favorite-btn', { favorited: isFavorited(prompt.id) }]"
-              :title="isFavorited(prompt.id) ? 'Remove from favorites' : 'Add to favorites'"
+              @click.stop="toggleFavorite(prompt)"
+              :class="['favorite-btn', { favorited: prompt.isFavorited }]"
+              :title="prompt.isFavorited ? 'Remove from favorites' : 'Add to favorites'"
             >
-              <i class="icon-heart"></i>
+              <i :class="['icon-heart', { favorited: prompt.isFavorited }]"></i>
             </button>
           </div>
         </div>
@@ -106,25 +111,10 @@ const limit = ref(12)
 const searchQuery = ref('')
 const selectedTag = ref('')
 const availableTags = ref([])
+const showOnlyFavorites = ref(false)
 
 const isAuthenticated = computed(() => !!localStorage.getItem('token'))
 const token = computed(() => localStorage.getItem('token'))
-
-const favorites = ref([])
-
-const isFavorited = (promptId) => favorites.value.includes(promptId)
-
-const loadFavorites = async () => {
-  if (!isAuthenticated.value) return
-  try {
-    const response = await axios.get('/api/prompts/favorites', {
-      headers: { Authorization: `Bearer ${token.value}` }
-    })
-    favorites.value = response.data.prompts.map(p => p.id)
-  } catch (error) {
-    console.error('Failed to load favorites:', error)
-  }
-}
 
 const searchPrompts = async () => {
   skip.value = 0
@@ -137,7 +127,8 @@ const loadPrompts = async () => {
       skip: skip.value,
       limit: limit.value,
       q: searchQuery.value || undefined,
-      tags: selectedTag.value || undefined
+      tags: selectedTag.value || undefined,
+      favorites_only: showOnlyFavorites.value || undefined
     }
 
     const response = await axios.get('/api/prompts', {
@@ -174,23 +165,23 @@ const changePage = (direction) => {
   loadPrompts()
 }
 
-const toggleFavorite = async (promptId) => {
+const toggleFavorite = async (prompt) => {
   if (!isAuthenticated.value) {
     router.push('/login')
     return
   }
 
   try {
-    if (isFavorited(promptId)) {
-      await axios.delete(`/api/prompts/${promptId}/favorite`, {
+    if (prompt.isFavorited) {
+      await axios.delete(`/api/prompts/${prompt.id}/favorite`, {
         headers: { Authorization: `Bearer ${token.value}` }
       })
-      favorites.value = favorites.value.filter(id => id !== promptId)
+      prompt.isFavorited = false
     } else {
-      await axios.post(`/api/prompts/${promptId}/favorite`, {}, {
+      await axios.post(`/api/prompts/${prompt.id}/favorite`, {}, {
         headers: { Authorization: `Bearer ${token.value}` }
       })
-      favorites.value.push(promptId)
+      prompt.isFavorited = true
     }
   } catch (error) {
     if (error.response?.status === 401) {
@@ -202,14 +193,19 @@ const toggleFavorite = async (promptId) => {
   }
 }
 
+const applyFavoritesFilter = () => {
+  // Trigger search with new filter
+  searchPrompts()
+}
+
 const clearFilters = () => {
   searchQuery.value = ''
   selectedTag.value = ''
+  showOnlyFavorites.value = false
   searchPrompts()
 }
 
 onMounted(() => {
-  loadFavorites()
   loadPrompts()
 })
 </script>
@@ -518,5 +514,33 @@ onMounted(() => {
   .prompts-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.favorites-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 1.5rem;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  background: white;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.favorites-filter:hover {
+  border-color: #d1d5db;
+}
+
+.favorites-filter input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.filter-text {
+  font-weight: 500;
+  color: #374151;
 }
 </style>

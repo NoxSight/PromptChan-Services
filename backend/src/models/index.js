@@ -104,18 +104,24 @@ const UserPromptFavorites = sequelize.define('UserPromptFavorite', {
 // Associations
 User.hasMany(PromptTemplate, { foreignKey: 'creator_id', as: 'created_prompts' });
 PromptTemplate.belongsTo(User, { foreignKey: 'creator_id', as: 'creator' });
-User.belongsToMany(PromptTemplate, { 
-  through: UserPromptFavorites, 
+
+// Many-to-many favorites associations
+User.belongsToMany(PromptTemplate, {
+  through: UserPromptFavorites,
   foreignKey: 'user_id',
   otherKey: 'prompt_id',
-  as: 'favorites' 
+  as: 'favorites'
 });
-PromptTemplate.belongsToMany(User, { 
-  through: UserPromptFavorites, 
+PromptTemplate.belongsToMany(User, {
+  through: UserPromptFavorites,
   foreignKey: 'prompt_id',
   otherKey: 'user_id',
-  as: 'favorited_by' 
+  as: 'favorited_by'
 });
+
+// Direct associations for the junction table
+UserPromptFavorites.belongsTo(User, { foreignKey: 'user_id' });
+UserPromptFavorites.belongsTo(PromptTemplate, { foreignKey: 'prompt_id' });
 
 module.exports = {
   sequelize,
