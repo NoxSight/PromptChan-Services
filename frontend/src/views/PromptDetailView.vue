@@ -49,9 +49,31 @@
     
           <div v-for="(input, index) in prompt.inputs" :key="index" class="input-field">
             <label>{{ input.label || input.name }}</label>
-            <input
+            <textarea
+              v-if="input.type === 'textarea'"
               v-model="inputValues[input.name]"
-              :type="input.type === 'textarea' ? 'text' : input.type"
+              :placeholder="input.placeholder || `Enter ${input.name}`"
+              :required="input.required"
+              rows="4"
+            ></textarea>
+            <select
+              v-else-if="input.type === 'select'"
+              v-model="inputValues[input.name]"
+              :required="input.required"
+            >
+              <option value="" disabled>{{ input.placeholder || `Select ${input.name}` }}</option>
+              <option
+                v-for="option in input.options"
+                :key="option.value"
+                :value="option.value"
+              >
+                {{ option.label }}
+              </option>
+            </select>
+            <input
+              v-else
+              v-model="inputValues[input.name]"
+              :type="input.type"
               :placeholder="input.placeholder || `Enter ${input.name}`"
               :required="input.required"
             />
@@ -398,7 +420,9 @@ onMounted(() => {
   font-size: 0.95rem;
 }
 
-.input-field input {
+.input-field input,
+.input-field textarea,
+.input-field select {
   width: 100%;
   padding: 1rem;
   border: 2px solid #e5e7eb;
@@ -406,12 +430,21 @@ onMounted(() => {
   background: white;
   font-size: 1rem;
   box-sizing: border-box;
+  font-family: inherit;
+  resize: vertical;
 }
 
-.input-field input:focus {
+.input-field input:focus,
+.input-field textarea:focus,
+.input-field select:focus {
   outline: none;
   border-color: #667eea;
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.input-field textarea {
+  min-height: 100px;
+  line-height: 1.5;
 }
 
 .input-field small.input-description {
