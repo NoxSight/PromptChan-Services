@@ -1,6 +1,6 @@
 const express = require('express');
 const Joi = require('joi');
-const { Op, where } = require('sequelize');
+const { Op, where, literal } = require('sequelize');
 const { PromptTemplate, User } = require('../models/index.js');
 const { authenticateToken } = require('../utils/auth.js');
 
@@ -103,22 +103,46 @@ router.get('/', authenticateToken, async (req, res) => {
 
     // Full-text search across title, short_description, and tags
     if (q) {
+      const searchTerm = q.trim();
+      console.log('Search term:', searchTerm);
+      console.log('Op.or value:', Op.or);
+      console.log('Op.and value:', Op.and);
+      console.log('Op.iLike value:', Op.iLike);
+      
       whereClause[Op.or] = [
-        { title: { [Op.iLike]: `%${q}%` } },
-        { short_description: { [Op.iLike]: `%${q}%` } },
-        { tags: { [Op.iLike]: `%${q}%` } },
+        { title: { [Op.iLike]: `%${searchTerm}%` } },
+        { short_description: { [Op.iLike]: `%${searchTerm}%` } },
+        { tags: { [Op.iLike]: `%${searchTerm}%` } },
       ];
+      
+      console.log('whereClause keys:', Object.keys(whereClause));
+      console.log('whereClause symbols:', Object.getOwnPropertySymbols(whereClause));
+      console.log('whereClause[Op.or]:', whereClause[Op.or]);
     }
 
     // Filter by creator
     if (creator_id) {
       whereClause.creator_id = creator_id;
+      console.log('whereClause after creator filter:', JSON.stringify(whereClause, null, 2));
     }
 
-    // Filter by tags
+    // Filter by tags (this might conflict with search!)
     if (tags) {
-      whereClause.tags = { [Op.iLike]: `%${tags}%` };
+      console.log('Applying tags filter, q exists:', !!q);
+      // If we have a search query, we need to be careful not to override the search conditions
+      if (q) {
+        // Add tags filter to the AND conditions instead
+        if (!whereClause[Op.and]) {
+          whereClause[Op.and] = [];
+        }
+        whereClause[Op.and].push({ tags: { [Op.iLike]: `%${tags}%` } });
+      } else {
+        whereClause.tags = { [Op.iLike]: `%${tags}%` };
+      }
+      console.log('whereClause after tags filter:', JSON.stringify(whereClause, null, 2));
     }
+    
+    console.log('whereClause after filters:', JSON.stringify(whereClause, null, 2));
 
     // Build visibility condition separately and combine with other filters
     const visibilityCondition = {
@@ -131,7 +155,10 @@ router.get('/', authenticateToken, async (req, res) => {
     // Combine conditions properly
     let finalWhere = visibilityCondition;
     
-    if (Object.keys(whereClause).length > 0) {
+    // Check for both string keys and symbol keys (like Op.or)
+    const hasConditions = Object.keys(whereClause).length > 0 || Object.getOwnPropertySymbols(whereClause).length > 0;
+    
+    if (hasConditions) {
       finalWhere = {
         [Op.and]: [
           whereClause,
@@ -139,6 +166,9 @@ router.get('/', authenticateToken, async (req, res) => {
         ]
       };
     }
+    
+    console.log('Final where clause has conditions:', hasConditions);
+    console.log('Final where symbols:', Object.getOwnPropertySymbols(finalWhere));
 
     const { count, rows } = await PromptTemplate.findAndCountAll({
       where: finalWhere,
